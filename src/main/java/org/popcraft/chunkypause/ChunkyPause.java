@@ -11,6 +11,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.jetbrains.annotations.NotNull;
 import org.popcraft.chunky.api.ChunkyAPI;
 
 import java.util.List;
@@ -36,7 +37,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+    public boolean onCommand(CommandSender sender, @NotNull Command command, @NotNull String label, String[] args) {
         final int newPlayerCount = Integer.parseInt(args[0]);
         this.players = newPlayerCount;
         sender.sendMessage("Max player count changed to %d".formatted(newPlayerCount));
@@ -44,7 +45,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     }
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+    public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
         return List.of();
     }
 

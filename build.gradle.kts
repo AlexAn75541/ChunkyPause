@@ -12,12 +12,12 @@ repositories {
 }
 
 dependencies {
-    compileOnly(group = "org.spigotmc", name = "spigot-api", version = "1.19.2-R0.1-SNAPSHOT")
-    compileOnly(group = "org.popcraft", name = "chunky-common", version = "1.3.38")
+    compileOnly(group = "org.spigotmc", name = "spigot-api", version = "1.21.7-R0.1-SNAPSHOT")
+    compileOnly(group = "org.popcraft", name = "chunky-common", version = "1.4.43")
 }
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(17))
+        languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
