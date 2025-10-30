@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "org.popcraft"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()
@@ -12,7 +12,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly(group = "org.spigotmc", name = "spigot-api", version = "1.21.7-R0.1-SNAPSHOT")
+    compileOnly(group = "org.spigotmc", name = "spigot-api", version = "1.21.8-R0.1-SNAPSHOT")
     compileOnly(group = "org.popcraft", name = "chunky-common", version = "1.4.43")
 }
 
