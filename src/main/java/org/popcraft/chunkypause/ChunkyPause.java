@@ -38,10 +38,21 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
 
     @Override
     public boolean onCommand(CommandSender sender, @NotNull Command command, @NotNull String label, String[] args) {
-        final int newPlayerCount = Integer.parseInt(args[0]);
-        this.players = newPlayerCount;
-        sender.sendMessage("Max player count changed to %d".formatted(newPlayerCount));
-        return true;
+        if (args.length == 0) {
+            sender.sendMessage("Current max player count: " + this.players);
+            sender.sendMessage("Usage: /chunkypause <number>");
+            return true;
+        }
+        
+        try {
+            final int newPlayerCount = Integer.parseInt(args[0]);
+            this.players = newPlayerCount;
+            sender.sendMessage("Max player count changed to %d".formatted(newPlayerCount));
+            return true;
+        } catch (NumberFormatException e) {
+            sender.sendMessage("Error: Please provide a valid number");
+            return false;
+        }
     }
 
     @Override
