@@ -28,6 +28,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     private long resumeDelay;
     private boolean isPausedByMemory = false;
     private boolean isPausedByPlayers = false;
+    private boolean isForcePaused = false;
     private boolean cleanMemoryOnJoin;
     private long lastMemoryLogTime = 0;
     private long lastGCTime = 0;
@@ -164,15 +165,8 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                     lastMemoryLogTime = currentTime;
                 }
                 
-                // Check if memory threshold exceeded
+                // Check if memory threshold exceeded (only check USED memory, not allocated)
                 if (memInfo.usagePercent > memoryThreshold && !isPausedByMemory) {
-                    handleHighMemory(memInfo);
-                } 
-                // Emergency check: If allocated memory is very high even if used is not
-                else if (memInfo.allocatedMB > memInfo.maxMB * 0.90 && !isPausedByMemory) {
-                    getLogger().warning("§cAllocated memory critically high (" + 
-                        String.format("%.1f%%", (double) memInfo.allocatedMB / memInfo.maxMB * 100) + 
-                        ") - triggering emergency cleanup!");
                     handleHighMemory(memInfo);
                 }
             }
@@ -180,7 +174,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     }
 
     private void handleHighMemory(MemoryInfo memInfo) {
-        if (chunky == null) return;
+        if (chunky == null || isPausedByMemory) return;
         
         isPausedByMemory = true;
         getLogger().warning(String.format(
@@ -188,13 +182,24 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             memInfo.usagePercent * 100));
         
         // Pause all Chunky tasks
-        Bukkit.getServer().getWorlds().forEach(world -> {
+        int pausedCount = 0;
+        for (org.bukkit.World world : Bukkit.getServer().getWorlds()) {
             try {
                 chunky.pauseTask(world.getName());
+                pausedCount++;
             } catch (Exception e) {
                 // Task might not be running, ignore
             }
-        });
+        }
+        
+        if (pausedCount == 0) {
+            // No tasks were actually running, reset the flag
+            getLogger().info("No active Chunky tasks found - nothing to pause");
+            isPausedByMemory = false;
+            return;
+        }
+        
+        getLogger().info("Paused " + pausedCount + " Chunky task(s)");
         
         // Perform optimized GC based on JDK
         performOptimizedGC("high memory");
@@ -342,7 +347,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     private void scheduleMemoryRecoveryCheck() {
         new BukkitRunnable() {
             int attempts = 0;
-            final int maxAttempts = 10; // Try for up to 50 seconds (10 attempts * 5 seconds)
+            final int maxAttempts = 6; // Try for up to 30 seconds (6 attempts * 5 seconds)
             
             @Override
             public void run() {
@@ -353,9 +358,9 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                 if (memInfo.usagePercent < memoryThreshold - 0.05) {
                     isPausedByMemory = false;
                     
-                    // Check if we can resume based on player count
+                    // Check if we can resume based on player count and force pause
                     int currentPlayers = Bukkit.getOnlinePlayers().size();
-                    if (currentPlayers <= maxPlayers && !isPausedByPlayers) {
+                    if (currentPlayers <= maxPlayers && !isPausedByPlayers && !isForcePaused) {
                         getLogger().info(String.format(
                             "Memory recovered (%.1f%%). Resuming Chunky generation...", 
                             memInfo.usagePercent * 100));
@@ -369,9 +374,38 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                             }
                         });
                     } else {
-                        getLogger().info(String.format(
-                            "Memory recovered (%.1f%%), but %d players online (max: %d). Chunky remains paused.", 
-                            memInfo.usagePercent * 100, currentPlayers, maxPlayers));
+                        // Build reason string
+                        StringBuilder reason = new StringBuilder();
+                        if (currentPlayers > maxPlayers) {
+                            reason.append("players online (").append(currentPlayers).append("/").append(maxPlayers).append(")");
+                        }
+                        if (isForcePaused) {
+                            if (reason.length() > 0) reason.append(" and ");
+                            reason.append("force paused");
+                        }
+                        if (isPausedByPlayers) {
+                            if (reason.length() > 0) reason.append(" and ");
+                            reason.append("paused by player count");
+                        }
+                        
+                        if (reason.length() > 0) {
+                            getLogger().info(String.format(
+                                "Memory recovered (%.1f%%), but %s. Chunky remains paused.", 
+                                memInfo.usagePercent * 100, reason.toString()));
+                        } else {
+                            // No blocking reason - just resume
+                            getLogger().info(String.format(
+                                "Memory recovered (%.1f%%). Resuming Chunky generation...", 
+                                memInfo.usagePercent * 100));
+                            
+                            Bukkit.getServer().getWorlds().forEach(world -> {
+                                try {
+                                    chunky.continueTask(world.getName());
+                                } catch (Exception e) {
+                                    // Task might not exist, ignore
+                                }
+                            });
+                        }
                     }
                     
                     cancel();
@@ -380,11 +414,15 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                         "Memory still high after %d seconds (%.1f%%). Chunky remains paused.", 
                         (maxAttempts * resumeDelay / 20),
                         memInfo.usagePercent * 100));
+                    getLogger().warning("Will retry next time Chunky attempts to run or memory drops naturally.");
                     cancel();
                 } else {
-                    getLogger().info(String.format(
-                        "Waiting for memory to recover... (%.1f%% used, attempt %d/%d)", 
-                        memInfo.usagePercent * 100, attempts, maxAttempts));
+                    // Only log every other attempt to reduce spam
+                    if (attempts % 2 == 0) {
+                        getLogger().info(String.format(
+                            "Waiting for memory to recover... (%.1f%% used, attempt %d/%d)", 
+                            memInfo.usagePercent * 100, attempts, maxAttempts));
+                    }
                 }
             }
         }.runTaskTimer(this, resumeDelay, resumeDelay);
@@ -463,12 +501,14 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             sender.sendMessage("");
             sender.sendMessage("§7Paused by memory: §e" + isPausedByMemory);
             sender.sendMessage("§7Paused by players: §e" + isPausedByPlayers);
+            sender.sendMessage("§7Force paused: §e" + isForcePaused);
             sender.sendMessage("§7Clean on join: §e" + cleanMemoryOnJoin);
             sender.sendMessage("§6═══════════════════════════════════");
             sender.sendMessage("§7Commands:");
             sender.sendMessage("§e  /chunkypause <number> §7- Set max players");
             sender.sendMessage("§e  /chunkypause reload §7- Reload config");
             sender.sendMessage("§e  /chunkypause gc §7- Force GC");
+            sender.sendMessage("§e  /chunkypause forcepause §7- Toggle force pause");
             return true;
         }
         
@@ -486,6 +526,53 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             sender.sendMessage("§6Forcing garbage collection...");
             lastGCTime = 0; // Reset cooldown
             performOptimizedGC("manual command");
+            return true;
+        }
+        
+        // Handle forcepause command
+        if (args[0].equalsIgnoreCase("forcepause")) {
+            isForcePaused = !isForcePaused;
+            
+            if (isForcePaused) {
+                // Pause Chunky
+                sender.sendMessage("§6Force pausing Chunky generation...");
+                Bukkit.getServer().getWorlds().forEach(world -> {
+                    try {
+                        chunky.pauseTask(world.getName());
+                    } catch (Exception e) {
+                        // Task might not be running, ignore
+                    }
+                });
+                sender.sendMessage("§aChunky is now force paused. It will not resume automatically.");
+                sender.sendMessage("§7Use §e/chunkypause forcepause §7again to allow automatic resuming.");
+            } else {
+                // Allow Chunky to resume if conditions allow
+                sender.sendMessage("§aForce pause disabled. Chunky can now resume automatically.");
+                
+                // Check if we should resume immediately
+                int currentPlayers = Bukkit.getOnlinePlayers().size();
+                MemoryInfo memInfo = getDetailedMemoryInfo();
+                
+                if (currentPlayers <= maxPlayers && memInfo.usagePercent < memoryThreshold) {
+                    sender.sendMessage("§aConditions met - resuming Chunky generation...");
+                    Bukkit.getServer().getWorlds().forEach(world -> {
+                        try {
+                            chunky.continueTask(world.getName());
+                        } catch (Exception e) {
+                            // Task might not exist, ignore
+                        }
+                    });
+                } else {
+                    sender.sendMessage("§7Chunky will resume when conditions are met:");
+                    if (currentPlayers > maxPlayers) {
+                        sender.sendMessage("§7  - Players: §e" + currentPlayers + "/" + maxPlayers + " §c(too many)");
+                    }
+                    if (memInfo.usagePercent >= memoryThreshold) {
+                        sender.sendMessage("§7  - Memory: §e" + String.format("%.1f%%", memInfo.usagePercent * 100) + " §c(too high)");
+                    }
+                }
+            }
+            
             return true;
         }
         
@@ -514,7 +601,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                     }
                 });
                 sender.sendMessage("§6Chunky paused (current players: " + currentPlayers + ")");
-            } else if (currentPlayers <= maxPlayers && isPausedByPlayers && !isPausedByMemory) {
+            } else if (currentPlayers <= maxPlayers && isPausedByPlayers && !isPausedByMemory && !isForcePaused) {
                 isPausedByPlayers = false;
                 Bukkit.getServer().getWorlds().forEach(world -> {
                     try {
@@ -524,6 +611,8 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                     }
                 });
                 sender.sendMessage("§aChunky resumed (current players: " + currentPlayers + ")");
+            } else if (isForcePaused) {
+                sender.sendMessage("§7Chunky is force paused. Use §e/chunkypause forcepause §7to allow resuming.");
             }
             
             return true;
@@ -536,6 +625,9 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
 
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
+        if (args.length == 1) {
+            return List.of("reload", "gc", "forcepause", "0", "1", "2", "5", "10");
+        }
         return List.of();
     }
 
@@ -581,8 +673,8 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             public void run() {
                 final int playerCount = server.getOnlinePlayers().size();
                 
-                // Resume Chunky if player count is at or below threshold
-                if (playerCount <= maxPlayers && chunky != null && isPausedByPlayers && !isPausedByMemory) {
+                // Resume Chunky if player count is at or below threshold and not force paused
+                if (playerCount <= maxPlayers && chunky != null && isPausedByPlayers && !isPausedByMemory && !isForcePaused) {
                     isPausedByPlayers = false;
                     getLogger().info("Player count (" + playerCount + ") at/below limit (" + maxPlayers + 
                                    "). Resuming Chunky generation...");
@@ -595,6 +687,8 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                     });
                 } else if (playerCount > maxPlayers) {
                     getLogger().info("Players still online (" + playerCount + "). Keeping Chunky paused.");
+                } else if (isForcePaused) {
+                    getLogger().info("Player count acceptable, but Chunky is force paused. Use /chunkypause forcepause to resume.");
                 }
             }
         }.runTaskLater(this, 40L); // Wait 2 seconds after quit
