@@ -1,1 +1,46 @@
+# Maximum number of players before pausing Chunky generation
+# Set to -1 to disable player-based pausing
+# Set to 0 to pause when any player joins
 players: 0
+
+# Memory usage threshold (0.0 to 1.0, where 1.0 is 100%)
+# When memory exceeds this percentage, Chunky will be automatically paused
+# 
+# The plugin automatically detects your JDK and adjusts GC strategies:
+# - Azul JDK detected: Single-pass GC (C4/ZGC is highly efficient)
+# - Standard JDK: Multi-pass GC for thorough cleanup
+# - mimalloc detected: Optimized GC with reduced fragmentation benefits
+# 
+# Recommended values:
+# - Standard JDK: 0.80-0.85 (80-85%)
+# - Azul JDK: 0.85-0.88 (85-88%) - Better memory management
+# - Azul + mimalloc: 0.88-0.90 (88-90%) - Best performance
+memory-threshold: 0.85
+
+# How often to check memory usage (in ticks, 20 ticks = 1 second)
+# Lower values = more frequent checks = more CPU usage but faster response
+# 
+# The plugin will automatically adapt its GC strategy based on detected JDK
+# Default: 100 ticks = 5 seconds
+check-interval: 100
+
+# How long to wait before checking if memory has recovered (in ticks)
+# After pausing due to high memory, the plugin will wait this long before checking again
+# 
+# Recommended values:
+# - Standard JDK: 100 ticks (5 seconds) - GC takes longer
+# - Azul JDK: 60 ticks (3 seconds) - Faster GC recovery
+# Default: 100 ticks = 5 seconds
+resume-delay: 100
+
+# Clean memory (trigger garbage collection) when a player joins
+# This helps prevent lag spikes when players join during heavy chunk generation
+# 
+# The plugin uses adaptive GC strategies:
+# - Azul JDK: Fast, low-pause GC (minimal impact)
+# - Standard JDK: Conservative multi-pass GC
+# - With mimalloc: Enhanced efficiency in all cases
+# 
+# GC cooldown: 10 seconds (prevents excessive GC calls)
+# Recommended: true (especially beneficial with Azul/mimalloc)
+clean-memory-on-join: true

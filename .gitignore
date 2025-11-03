@@ -115,3 +115,4 @@ run/
 # Gradle
 .gradle/
 build/
+.vscode/settings.json
