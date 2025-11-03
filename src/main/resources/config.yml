@@ -1,10 +1,30 @@
-# Maximum number of players before pausing Chunky generation
-# Set to -1 to disable player-based pausing
-# Set to 0 to pause when any player joins
-players: 0
+# ========================================
+# ChunkyPause Configuration
+# ========================================
+# 
+# ChunkyPause intelligently manages Chunky chunk generation to prevent
+# server lag and ensure optimal performance for players.
+#
+# Author: AlexAn75541
+# ========================================
+
+# Maximum number of players allowed before pausing Chunky generation
+# When player count exceeds this number, Chunky will automatically pause
+# Set to 0 to pause when any player joins (maximum performance for players)
+# Examples:
+#   0 = Pause when any player is online
+#   1 = Allow Chunky to run with 1 player, pause with 2+
+#   5 = Allow Chunky to run with up to 5 players
+max-players: 0
 
 # Memory usage threshold (0.0 to 1.0, where 1.0 is 100%)
 # When memory exceeds this percentage, Chunky will be automatically paused
+# 
+# The plugin uses AGGRESSIVE memory management that:
+# - Triggers full garbage collection
+# - Attempts to release allocated memory back to OS
+# - Reduces MSPT spikes caused by memory pressure
+# - Monitors both USED and ALLOCATED memory
 # 
 # The plugin automatically detects your JDK and adjusts GC strategies:
 # - Azul JDK detected: Single-pass GC (C4/ZGC is highly efficient)
@@ -15,13 +35,20 @@ players: 0
 # - Standard JDK: 0.80-0.85 (80-85%)
 # - Azul JDK: 0.85-0.88 (85-88%) - Better memory management
 # - Azul + mimalloc: 0.88-0.90 (88-90%) - Best performance
+# - Low RAM servers (<6GB): 0.75-0.80 (75-80%) - More aggressive
 memory-threshold: 0.85
 
 # How often to check memory usage (in ticks, 20 ticks = 1 second)
 # Lower values = more frequent checks = more CPU usage but faster response
 # 
+# The plugin monitors:
+# - Used memory vs Max memory (prevents OOM)
+# - Allocated memory vs Max memory (prevents MSPT lag)
+# - Emergency triggers at 90% allocated memory
+# 
 # The plugin will automatically adapt its GC strategy based on detected JDK
 # Default: 100 ticks = 5 seconds
+# For low RAM: 40-60 ticks recommended
 check-interval: 100
 
 # How long to wait before checking if memory has recovered (in ticks)
@@ -36,9 +63,15 @@ resume-delay: 100
 # Clean memory (trigger garbage collection) when a player joins
 # This helps prevent lag spikes when players join during heavy chunk generation
 # 
+# The plugin uses AGGRESSIVE strategies:
+# - Multi-pass GC for standard JDK
+# - Attempts to release memory to OS
+# - Reduces allocated memory overhead
+# - Helps reduce MSPT lag
+# 
 # The plugin uses adaptive GC strategies:
 # - Azul JDK: Fast, low-pause GC (minimal impact)
-# - Standard JDK: Conservative multi-pass GC
+# - Standard JDK: Aggressive multi-pass GC with memory release
 # - With mimalloc: Enhanced efficiency in all cases
 # 
 # GC cooldown: 10 seconds (prevents excessive GC calls)

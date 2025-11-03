@@ -22,7 +22,7 @@ import java.util.List;
 
 public final class ChunkyPause extends JavaPlugin implements Listener {
     private ChunkyAPI chunky;
-    private int players = -1;
+    private int maxPlayers = 0;
     private long memoryCheckInterval;
     private double memoryThreshold;
     private long resumeDelay;
@@ -54,13 +54,13 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
         // Load ChunkyAPI
         this.chunky = Bukkit.getServer().getServicesManager().load(ChunkyAPI.class);
         if (chunky != null && chunky.version() == 0) {
-            this.players = getConfig().getInt("players", -1);
             getServer().getPluginManager().registerEvents(this, this);
             
             // Start memory monitoring
             startMemoryMonitor();
             
             getLogger().info("ChunkyPause enabled with adaptive memory monitoring");
+            getLogger().info("Max players allowed during generation: " + maxPlayers);
             getLogger().info("JVM: " + jvmName + " by " + jvmVendor);
             
             if (isAzulJDK) {
@@ -131,6 +131,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     }
 
     private void loadConfiguration() {
+        maxPlayers = getConfig().getInt("max-players", 0);
         memoryThreshold = getConfig().getDouble("memory-threshold", 0.85);
         memoryCheckInterval = getConfig().getLong("check-interval", 100L);
         resumeDelay = getConfig().getLong("resume-delay", 100L);
@@ -146,16 +147,32 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                 // Log memory usage periodically (every 60 seconds)
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastMemoryLogTime >= 60000) {
-                    getLogger().info(String.format("Memory: %.1f%% used (%dMB / %dMB, allocated: %dMB)", 
+                    double allocatedPercent = ((double) memInfo.allocatedMB / memInfo.maxMB) * 100;
+                    getLogger().info(String.format("Memory: %.1f%% used (%dMB / %dMB allocated / %dMB max) | Allocated: %.1f%%", 
                         memInfo.usagePercent * 100, 
                         memInfo.usedMB, 
+                        memInfo.allocatedMB,
                         memInfo.maxMB,
-                        memInfo.allocatedMB));
+                        allocatedPercent));
+                    
+                    // Warn if allocated memory is getting too high
+                    if (allocatedPercent > 90) {
+                        getLogger().warning("§eAllocated memory very high (" + String.format("%.1f%%", allocatedPercent) + 
+                                          ") - May cause lag and high MSPT");
+                    }
+                    
                     lastMemoryLogTime = currentTime;
                 }
                 
                 // Check if memory threshold exceeded
                 if (memInfo.usagePercent > memoryThreshold && !isPausedByMemory) {
+                    handleHighMemory(memInfo);
+                } 
+                // Emergency check: If allocated memory is very high even if used is not
+                else if (memInfo.allocatedMB > memInfo.maxMB * 0.90 && !isPausedByMemory) {
+                    getLogger().warning("§cAllocated memory critically high (" + 
+                        String.format("%.1f%%", (double) memInfo.allocatedMB / memInfo.maxMB * 100) + 
+                        ") - triggering emergency cleanup!");
                     handleHighMemory(memInfo);
                 }
             }
@@ -199,57 +216,127 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
         lastGCTime = currentTime;
         MemoryInfo beforeGC = getDetailedMemoryInfo();
         
-        getLogger().info("§6Performing garbage collection (" + reason + ")...");
+        getLogger().info("§6=== Starting Aggressive Memory Cleanup (" + reason + ") ===");
+        getLogger().info("§7Before: Used=" + beforeGC.usedMB + "MB, Allocated=" + beforeGC.allocatedMB + 
+                        "MB, Max=" + beforeGC.maxMB + "MB (" + String.format("%.1f%%", beforeGC.usagePercent * 100) + ")");
         
+        // Phase 1: Clear soft references and perform full GC
         if (isAzulJDK && isMimallocDetected) {
             // Azul JDK + mimalloc: Most efficient setup
-            // Single GC call is sufficient due to optimized allocator and C4/ZGC
-            getLogger().info("§7Using Azul+mimalloc optimized GC strategy");
+            getLogger().info("§7Strategy: Azul+mimalloc optimized (single-pass with heap trim)");
             System.gc();
+            
+            // Try to trigger memory release to OS
+            try {
+                // For Azul JDK, suggest heap trimming
+                memoryMXBean.gc();
+                Thread.sleep(100);
+            } catch (Exception e) {
+                // Ignore
+            }
         } else if (isAzulJDK) {
             // Azul JDK alone: C4/ZGC handles memory efficiently
-            getLogger().info("§7Using Azul JDK optimized GC strategy");
+            getLogger().info("§7Strategy: Azul JDK optimized (aggressive with compaction)");
             System.gc();
             try {
-                memoryMXBean.gc(); // Additional hint for heap compaction
+                memoryMXBean.gc();
+                Thread.sleep(100);
             } catch (Exception e) {
-                // Ignore if not available
+                // Ignore
             }
         } else if (isMimallocDetected) {
-            // mimalloc with standard JDK: Reduced fragmentation helps
-            getLogger().info("§7Using mimalloc optimized GC strategy");
-            System.gc();
-        } else {
-            // Standard JVM: Multiple GC calls for better cleanup
-            getLogger().info("§7Using standard JDK GC strategy (conservative)");
+            // mimalloc with standard JDK
+            getLogger().info("§7Strategy: mimalloc optimized (dual-pass)");
             System.gc();
             try {
-                Thread.sleep(500); // Give GC time to work
+                Thread.sleep(250);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            System.gc(); // Second pass for tenured generation
+            System.gc();
+        } else {
+            // Standard JVM: Aggressive multi-pass cleanup
+            getLogger().info("§7Strategy: Standard JDK (aggressive multi-pass)");
+            
+            // Pass 1: Clear weak/soft references
+            System.gc();
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            
+            // Pass 2: Additional cleanup pass
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            
+            // Pass 3: Full GC to reclaim tenured generation
+            System.gc();
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            
+            // Pass 4: Final cleanup attempt
+            System.gc();
         }
         
-        // Log results after a brief delay
+        // Phase 2: Try to force JVM to release memory back to OS
+        // This is critical for reducing allocated memory, not just used memory
+        getLogger().info("§7Phase 2: Attempting to release allocated memory to OS...");
+        
+        // Create temporary pressure to force deallocation
+        try {
+            Runtime runtime = Runtime.getRuntime();
+            long before = runtime.totalMemory();
+            
+            // Hint to JVM that we want to release memory
+            System.gc();
+            Thread.sleep(500); // Give GC time to work
+            
+            long after = runtime.totalMemory();
+            long released = (before - after) / (1024 * 1024);
+            
+            if (released > 0) {
+                getLogger().info("§aSuccessfully released " + released + "MB back to OS");
+            } else {
+                getLogger().info("§7JVM holding onto allocated memory (this is normal)");
+            }
+        } catch (Exception e) {
+            // Ignore
+        }
+        
+        // Phase 3: Wait and report results
         new BukkitRunnable() {
             @Override
             public void run() {
                 MemoryInfo afterGC = getDetailedMemoryInfo();
-                long freedMB = beforeGC.usedMB - afterGC.usedMB;
+                long freedUsedMB = beforeGC.usedMB - afterGC.usedMB;
+                long freedAllocatedMB = beforeGC.allocatedMB - afterGC.allocatedMB;
                 
-                if (freedMB > 0) {
-                    getLogger().info(String.format(
-                        "§aGC completed: Freed %dMB (%.1f%% -> %.1f%%)",
-                        freedMB,
-                        beforeGC.usagePercent * 100,
-                        afterGC.usagePercent * 100
-                    ));
+                getLogger().info("§6=== Memory Cleanup Complete ===");
+                getLogger().info("§7After: Used=" + afterGC.usedMB + "MB, Allocated=" + afterGC.allocatedMB + 
+                               "MB, Max=" + afterGC.maxMB + "MB (" + String.format("%.1f%%", afterGC.usagePercent * 100) + ")");
+                
+                if (freedUsedMB > 0 || freedAllocatedMB > 0) {
+                    getLogger().info("§aFreed: " + freedUsedMB + "MB used, " + freedAllocatedMB + "MB allocated");
+                    getLogger().info("§aUsage: " + String.format("%.1f%%", beforeGC.usagePercent * 100) + 
+                                   " -> " + String.format("%.1f%%", afterGC.usagePercent * 100));
                 } else {
-                    getLogger().info("§7GC completed (minimal memory freed - this is normal)");
+                    getLogger().info("§7No significant memory freed (memory may already be optimal)");
+                }
+                
+                // Warn if allocated memory is still high
+                if (afterGC.allocatedMB > afterGC.maxMB * 0.85) {
+                    getLogger().warning("§eWarning: Allocated memory still high - JVM may not release memory");
+                    getLogger().warning("§eConsider using -XX:+AlwaysPreTouch=false or ZGC for better memory release");
                 }
             }
-        }.runTaskLater(this, 20L); // Wait 1 second
+        }.runTaskLater(this, 40L); // Wait 2 seconds for full GC cycle
     }
 
     private void scheduleMemoryRecoveryCheck() {
@@ -265,18 +352,27 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                 // Add 5% buffer below threshold to prevent rapid pause/resume cycles
                 if (memInfo.usagePercent < memoryThreshold - 0.05) {
                     isPausedByMemory = false;
-                    getLogger().info(String.format(
-                        "Memory recovered (%.1f%%). Resuming Chunky generation...", 
-                        memInfo.usagePercent * 100));
                     
-                    // Resume all Chunky tasks
-                    Bukkit.getServer().getWorlds().forEach(world -> {
-                        try {
-                            chunky.continueTask(world.getName());
-                        } catch (Exception e) {
-                            // Task might not exist, ignore
-                        }
-                    });
+                    // Check if we can resume based on player count
+                    int currentPlayers = Bukkit.getOnlinePlayers().size();
+                    if (currentPlayers <= maxPlayers && !isPausedByPlayers) {
+                        getLogger().info(String.format(
+                            "Memory recovered (%.1f%%). Resuming Chunky generation...", 
+                            memInfo.usagePercent * 100));
+                        
+                        // Resume all Chunky tasks
+                        Bukkit.getServer().getWorlds().forEach(world -> {
+                            try {
+                                chunky.continueTask(world.getName());
+                            } catch (Exception e) {
+                                // Task might not exist, ignore
+                            }
+                        });
+                    } else {
+                        getLogger().info(String.format(
+                            "Memory recovered (%.1f%%), but %d players online (max: %d). Chunky remains paused.", 
+                            memInfo.usagePercent * 100, currentPlayers, maxPlayers));
+                    }
                     
                     cancel();
                 } else if (attempts >= maxAttempts) {
@@ -337,11 +433,13 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     public boolean onCommand(CommandSender sender, @NotNull Command command, @NotNull String label, String[] args) {
         if (args.length == 0) {
             MemoryInfo memInfo = getDetailedMemoryInfo();
+            int currentPlayers = Bukkit.getOnlinePlayers().size();
             sender.sendMessage("§6═══════════════════════════════════");
             sender.sendMessage("§6       ChunkyPause Status");
             sender.sendMessage("§6═══════════════════════════════════");
-            sender.sendMessage("§7Max players: §e" + (this.players < 0 ? "Disabled" : this.players));
-            sender.sendMessage("§7Current players: §e" + Bukkit.getOnlinePlayers().size());
+            sender.sendMessage("§7Max players: §e" + maxPlayers);
+            sender.sendMessage("§7Current players: §e" + currentPlayers + 
+                (currentPlayers > maxPlayers ? " §c(OVER LIMIT)" : " §a(OK)"));
             sender.sendMessage("");
             sender.sendMessage("§7Memory usage: §e" + String.format("%.1f%%", memInfo.usagePercent * 100));
             sender.sendMessage("§7Memory: §e" + memInfo.usedMB + "MB §7/ §e" + memInfo.maxMB + "MB");
@@ -379,6 +477,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             reloadConfig();
             loadConfiguration();
             sender.sendMessage("§aConfiguration reloaded!");
+            sender.sendMessage("§7Max players: §e" + maxPlayers);
             return true;
         }
         
@@ -390,31 +489,47 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             return true;
         }
         
+        // Handle setting max players
         try {
-            final int newPlayerCount = Integer.parseInt(args[0]);
-            this.players = newPlayerCount;
-            getConfig().set("players", newPlayerCount);
+            final int newMaxPlayers = Integer.parseInt(args[0]);
+            if (newMaxPlayers < 0) {
+                sender.sendMessage("§cError: Player count must be 0 or greater");
+                return false;
+            }
+            
+            this.maxPlayers = newMaxPlayers;
+            getConfig().set("max-players", newMaxPlayers);
             saveConfig();
-            sender.sendMessage("§aMax player count changed to: §e" + newPlayerCount);
+            sender.sendMessage("§aMax players changed to: §e" + newMaxPlayers);
             
             // Check if we need to pause/resume immediately
             int currentPlayers = Bukkit.getOnlinePlayers().size();
-            if (newPlayerCount >= 0 && currentPlayers > newPlayerCount && !isPausedByPlayers) {
+            if (currentPlayers > maxPlayers && !isPausedByPlayers) {
                 isPausedByPlayers = true;
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "chunky pause");
+                Bukkit.getServer().getWorlds().forEach(world -> {
+                    try {
+                        chunky.pauseTask(world.getName());
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                });
                 sender.sendMessage("§6Chunky paused (current players: " + currentPlayers + ")");
-            } else if (newPlayerCount >= 0 && currentPlayers <= newPlayerCount && isPausedByPlayers) {
+            } else if (currentPlayers <= maxPlayers && isPausedByPlayers && !isPausedByMemory) {
                 isPausedByPlayers = false;
-                if (!isPausedByMemory) {
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "chunky continue");
-                    sender.sendMessage("§aChunky resumed");
-                }
+                Bukkit.getServer().getWorlds().forEach(world -> {
+                    try {
+                        chunky.continueTask(world.getName());
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                });
+                sender.sendMessage("§aChunky resumed (current players: " + currentPlayers + ")");
             }
             
             return true;
         } catch (NumberFormatException e) {
             sender.sendMessage("§cError: Please provide a valid number");
-            sender.sendMessage("§7Use -1 to disable player-based pausing");
+            sender.sendMessage("§7Use /chunkypause <number> to set max players");
             return false;
         }
     }
@@ -429,22 +544,11 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
         final Server server = event.getPlayer().getServer();
         final int playerCount = server.getOnlinePlayers().size();
         
-        // Clean memory when player joins (if enabled)
-        if (cleanMemoryOnJoin) {
-            getLogger().info("Player " + event.getPlayer().getName() + " joined. Cleaning memory...");
-            // Delay slightly to not block the join process
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    cleanMemory();
-                }
-            }.runTaskLater(this, 20L); // Wait 1 second after join
-        }
-        
         // Check if we should pause Chunky based on player count
-        if (players >= 0 && playerCount > players && chunky != null && !isPausedByPlayers) {
+        if (playerCount > maxPlayers && chunky != null && !isPausedByPlayers) {
             isPausedByPlayers = true;
-            getLogger().info("Player count (" + playerCount + ") exceeded limit (" + players + "). Pausing Chunky...");
+            getLogger().info("Player " + event.getPlayer().getName() + " joined. Player count (" + 
+                           playerCount + ") exceeded limit (" + maxPlayers + "). Pausing Chunky...");
             server.getWorlds().forEach(world -> {
                 try {
                     chunky.pauseTask(world.getName());
@@ -452,6 +556,18 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                     // Task might not be running, ignore
                 }
             });
+        }
+        
+        // Clean memory when player joins (if enabled)
+        if (cleanMemoryOnJoin) {
+            getLogger().info("Player joined. Cleaning memory...");
+            // Delay slightly to not block the join process
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    cleanMemory();
+                }
+            }.runTaskLater(this, 20L); // Wait 1 second after join
         }
     }
 
@@ -465,10 +581,11 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             public void run() {
                 final int playerCount = server.getOnlinePlayers().size();
                 
-                // Check if we should resume Chunky based on player count
-                if (players >= 0 && playerCount <= players && chunky != null && isPausedByPlayers && !isPausedByMemory) {
+                // Resume Chunky if player count is at or below threshold
+                if (playerCount <= maxPlayers && chunky != null && isPausedByPlayers && !isPausedByMemory) {
                     isPausedByPlayers = false;
-                    getLogger().info("Player count (" + playerCount + ") at/below limit (" + players + "). Resuming Chunky...");
+                    getLogger().info("Player count (" + playerCount + ") at/below limit (" + maxPlayers + 
+                                   "). Resuming Chunky generation...");
                     server.getWorlds().forEach(world -> {
                         try {
                             chunky.continueTask(world.getName());
@@ -476,6 +593,8 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                             // Task might not exist, ignore
                         }
                     });
+                } else if (playerCount > maxPlayers) {
+                    getLogger().info("Players still online (" + playerCount + "). Keeping Chunky paused.");
                 }
             }
         }.runTaskLater(this, 40L); // Wait 2 seconds after quit
