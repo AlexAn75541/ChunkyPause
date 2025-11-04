@@ -20,60 +20,69 @@ max-players: 0
 # Memory usage threshold (0.0 to 1.0, where 1.0 is 100%)
 # When memory exceeds this percentage, Chunky will be automatically paused
 # 
-# The plugin uses AGGRESSIVE memory management that:
-# - Triggers full garbage collection
-# - Attempts to release allocated memory back to OS
-# - Reduces MSPT spikes caused by memory pressure
-# - Monitors both USED and ALLOCATED memory
+# The plugin uses SMART memory management:
+# - Triggers garbage collection when needed
+# - Monitors USED memory (not allocated)
+# - Adapts to your GC type (G1, ZGC, Shenandoah, etc.)
+# - Handles fixed heap (-Xmx = -Xms) scenarios properly
 # 
-# The plugin automatically detects your JDK and adjusts GC strategies:
-# - Azul JDK detected: Single-pass GC (C4/ZGC is highly efficient)
-# - Standard JDK: Multi-pass GC for thorough cleanup
-# - mimalloc detected: Optimized GC with reduced fragmentation benefits
+# The plugin automatically detects:
+# - Your garbage collector type
+# - Whether heap size is fixed or dynamic
+# - Optimal GC strategy for your configuration
 # 
 # Recommended values:
-# - Standard JDK: 0.80-0.85 (80-85%)
-# - Azul JDK: 0.85-0.88 (85-88%) - Better memory management
-# - Azul + mimalloc: 0.88-0.90 (88-90%) - Best performance
-# - Low RAM servers (<6GB): 0.75-0.80 (75-80%) - More aggressive
+# - 6GB RAM or less: 0.75-0.80 (75-80%)
+# - 8GB RAM: 0.80-0.85 (80-85%)
+# - 12GB+ RAM: 0.85-0.88 (85-88%)
+# - With ZGC/Shenandoah: 0.85-0.90 (better memory management)
 memory-threshold: 0.85
 
 # How often to check memory usage (in ticks, 20 ticks = 1 second)
 # Lower values = more frequent checks = more CPU usage but faster response
 # 
-# The plugin monitors:
-# - Used memory vs Max memory (prevents OOM)
-# - Allocated memory vs Max memory (prevents MSPT lag)
-# - Emergency triggers at 90% allocated memory
+# The plugin intelligently monitors:
+# - USED memory percentage (vs Max memory)
+# - Only triggers when actual usage is high
+# - Ignores allocated memory in fixed heap scenarios
 # 
-# The plugin will automatically adapt its GC strategy based on detected JDK
+# The plugin adapts to your garbage collector automatically
 # Default: 100 ticks = 5 seconds
-# For low RAM: 40-60 ticks recommended
+# For servers <6GB RAM: 80 ticks (4 seconds)
+# For servers with ZGC/Shenandoah: 120 ticks (6 seconds)
 check-interval: 100
 
 # How long to wait before checking if memory has recovered (in ticks)
 # After pausing due to high memory, the plugin will wait this long before checking again
 # 
-# Recommended values:
-# - Standard JDK: 100 ticks (5 seconds) - GC takes longer
-# - Azul JDK: 60 ticks (3 seconds) - Faster GC recovery
+# Recommended values based on GC type:
+# - Standard/G1GC: 100 ticks (5 seconds)
+# - ZGC/Shenandoah: 60 ticks (3 seconds) - Faster recovery
 # Default: 100 ticks = 5 seconds
 resume-delay: 100
 
 # Clean memory (trigger garbage collection) when a player joins
 # This helps prevent lag spikes when players join during heavy chunk generation
 # 
-# The plugin uses AGGRESSIVE strategies:
-# - Multi-pass GC for standard JDK
-# - Attempts to release memory to OS
-# - Reduces allocated memory overhead
-# - Helps reduce MSPT lag
-# 
-# The plugin uses adaptive GC strategies:
-# - Azul JDK: Fast, low-pause GC (minimal impact)
-# - Standard JDK: Aggressive multi-pass GC with memory release
-# - With mimalloc: Enhanced efficiency in all cases
+# The plugin uses ADAPTIVE strategies:
+# - Fixed heap (-Xmx = -Xms): Single pass GC
+# - ZGC/Shenandoah: Minimal intervention (already low-pause)
+# - G1GC: Dual-pass cleanup
+# - Standard GC: Multi-pass thorough cleanup
 # 
 # GC cooldown: 10 seconds (prevents excessive GC calls)
-# Recommended: true (especially beneficial with Azul/mimalloc)
+# Recommended: true (low impact with modern GCs)
 clean-memory-on-join: true
+
+# Force pause state - manual override to keep Chunky paused
+# When set to true, Chunky will remain paused regardless of player count or memory
+# This state is saved when using /chunkypause forcepause command
+# 
+# Use cases:
+# - Manually pause generation during peak hours
+# - Prevent automatic resuming during maintenance
+# - Keep generation disabled until explicitly enabled
+# 
+# This value is automatically updated by /chunkypause forcepause command
+# Default: false (allow automatic pause/resume based on conditions)
+force-paused: false

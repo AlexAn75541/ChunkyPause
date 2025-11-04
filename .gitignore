@@ -116,3 +116,4 @@ run/
 .gradle/
 build/
 .vscode/settings.json
+.github/copilot-instructions.md

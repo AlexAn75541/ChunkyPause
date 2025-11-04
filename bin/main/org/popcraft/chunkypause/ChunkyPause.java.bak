@@ -130,7 +130,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
         
         getLogger().info("===========================================");
     }
-
+    
     private String detectGarbageCollector() {
         try {
             List<String> jvmArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
@@ -160,7 +160,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
         }
     }
 
-    public void loadConfiguration() {
+    private void loadConfiguration() {
         maxPlayers = getConfig().getInt("max-players", 0);
         memoryThreshold = getConfig().getDouble("memory-threshold", 0.85);
         memoryCheckInterval = getConfig().getLong("check-interval", 100L);
@@ -720,91 +720,6 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             this.maxMB = maxMB;
             this.allocatedMB = allocatedMB;
             this.usagePercent = usagePercent;
-        }
-    }
-    
-    // Public getters for command handler
-    public int getMaxPlayers() {
-        return maxPlayers;
-    }
-    
-    public void setMaxPlayers(int maxPlayers) {
-        this.maxPlayers = maxPlayers;
-    }
-    
-    public double getMemoryThreshold() {
-        return memoryThreshold;
-    }
-    
-    public boolean isPausedByMemory() {
-        return isPausedByMemory;
-    }
-    
-    public boolean isPausedByPlayers() {
-        return isPausedByPlayers;
-    }
-    
-    public boolean isForcePaused() {
-        return isForcePaused;
-    }
-    
-    public void setForcePaused(boolean forcePaused) {
-        this.isForcePaused = forcePaused;
-    }
-    
-    public boolean isCleanMemoryOnJoin() {
-        return cleanMemoryOnJoin;
-    }
-    
-    public boolean isFixedHeapSize() {
-        return isFixedHeapSize;
-    }
-    
-    public String getJvmName() {
-        return jvmName;
-    }
-    
-    public String getJvmVersion() {
-        return jvmVersion;
-    }
-    
-    public String getGcType() {
-        return gcType;
-    }
-    
-    public void resetGCCooldown() {
-        lastGCTime = 0;
-    }
-    
-    public void checkPlayerThreshold(CommandSender sender) {
-        int currentPlayers = Bukkit.getOnlinePlayers().size();
-        
-        if (currentPlayers > maxPlayers && !isPausedByPlayers) {
-            isPausedByPlayers = true;
-            Bukkit.getServer().getWorlds().forEach(world -> {
-                try {
-                    chunky.pauseTask(world.getName());
-                } catch (Exception e) {
-                    // Ignore
-                }
-            });
-            if (sender != null) {
-                sender.sendMessage(org.bukkit.ChatColor.GOLD + "Chunky paused (current players: " + currentPlayers + ")");
-            }
-        } else if (currentPlayers <= maxPlayers && isPausedByPlayers && !isPausedByMemory && !isForcePaused) {
-            isPausedByPlayers = false;
-            Bukkit.getServer().getWorlds().forEach(world -> {
-                try {
-                    chunky.continueTask(world.getName());
-                } catch (Exception e) {
-                    // Ignore
-                }
-            });
-            if (sender != null) {
-                sender.sendMessage(org.bukkit.ChatColor.GREEN + "Chunky resumed (current players: " + currentPlayers + ")");
-            }
-        } else if (isForcePaused && sender != null) {
-            sender.sendMessage(org.bukkit.ChatColor.GRAY + "Chunky is force paused. Use " + org.bukkit.ChatColor.YELLOW + "/chunkypause forcepause " + org.bukkit.ChatColor.GRAY + "to allow resuming.");
         }
     }
 }
