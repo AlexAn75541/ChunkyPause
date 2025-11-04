@@ -47,6 +47,8 @@ public class ChunkyPauseCommand implements CommandExecutor, TabCompleter {
                 return handleGC(sender);
             case "forcepause":
                 return handleForcePause(sender);
+            case "togglememory":
+                return handleToggleMemory(sender);
             default:
                 return handleSetMaxPlayers(sender, args[0]);
         }
@@ -85,12 +87,15 @@ public class ChunkyPauseCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(colorize("&7Paused by players: &e" + plugin.isPausedByPlayers()));
         sender.sendMessage(colorize("&7Force paused: &e" + plugin.isForcePaused()));
         sender.sendMessage(colorize("&7Clean on join: &e" + plugin.isCleanMemoryOnJoin()));
+        sender.sendMessage(colorize("&7Memory monitoring: &e" + 
+            (plugin.isMemoryMonitoringEnabled() ? "&aENABLED" : "&cDISABLED")));
         sender.sendMessage(colorize("&6═══════════════════════════════════"));
         sender.sendMessage(colorize("&7Commands:"));
         sender.sendMessage(colorize("&e  /chunkypause <number> &7- Set max players"));
         sender.sendMessage(colorize("&e  /chunkypause reload &7- Reload config"));
         sender.sendMessage(colorize("&e  /chunkypause gc &7- Force GC"));
         sender.sendMessage(colorize("&e  /chunkypause forcepause &7- Toggle force pause"));
+        sender.sendMessage(colorize("&e  /chunkypause togglememory &7- Toggle memory monitoring"));
     }
     
     /**
@@ -172,6 +177,37 @@ public class ChunkyPauseCommand implements CommandExecutor, TabCompleter {
     }
     
     /**
+     * Handle toggle memory monitoring command
+     */
+    private boolean handleToggleMemory(CommandSender sender) {
+        boolean newState = !plugin.isMemoryMonitoringEnabled();
+        plugin.setMemoryMonitoringEnabled(newState);
+        
+        if (newState) {
+            sender.sendMessage(colorize("&aMemory monitoring &aENABLED"));
+            sender.sendMessage(colorize("&7The plugin will now:"));
+            sender.sendMessage(colorize("&7  - Monitor memory usage continuously"));
+            sender.sendMessage(colorize("&7  - Auto-pause Chunky when memory threshold is exceeded"));
+            sender.sendMessage(colorize("&7  - Perform GC when needed"));
+            sender.sendMessage(colorize("&7  - Use adaptive strategies for your GC type (&e" + plugin.getGcType() + "&7)"));
+            
+            if (plugin.isFixedHeapSize()) {
+                sender.sendMessage(colorize("&7  - Monitor &eUSED&7 memory only (fixed heap detected)"));
+            }
+        } else {
+            sender.sendMessage(colorize("&cMemory monitoring &cDISABLED"));
+            sender.sendMessage(colorize("&7The plugin will now:"));
+            sender.sendMessage(colorize("&7  - Only manage pause/resume based on player count"));
+            sender.sendMessage(colorize("&7  - Not automatically pause for high memory"));
+            sender.sendMessage(colorize("&7  - Manual GC via &e/chunkypause gc &7still available"));
+        }
+        
+        sender.sendMessage(colorize("&7This setting has been saved to config.yml"));
+        
+        return true;
+    }
+    
+    /**
      * Handle set max players command
      */
     private boolean handleSetMaxPlayers(CommandSender sender, String arg) {
@@ -202,7 +238,7 @@ public class ChunkyPauseCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, 
                                      @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            return List.of("reload", "gc", "forcepause", "0", "1", "2", "5", "10");
+            return List.of("reload", "gc", "forcepause", "togglememory", "0", "1", "2", "5", "10");
         }
         return List.of();
     }

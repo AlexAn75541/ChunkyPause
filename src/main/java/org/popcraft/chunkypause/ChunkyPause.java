@@ -29,6 +29,7 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     private boolean isPausedByPlayers = false;
     private boolean isForcePaused = false;
     private boolean cleanMemoryOnJoin;
+    private boolean memoryMonitoringEnabled = true; // Toggle for memory monitoring
     private long lastMemoryLogTime = 0;
     private long lastGCTime = 0;
     private static final long GC_COOLDOWN = 10000; // 10 seconds minimum between GC calls
@@ -167,17 +168,26 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
         resumeDelay = getConfig().getLong("resume-delay", 100L);
         cleanMemoryOnJoin = getConfig().getBoolean("clean-memory-on-join", true);
         isForcePaused = getConfig().getBoolean("force-paused", false);
+        memoryMonitoringEnabled = getConfig().getBoolean("memory-monitoring-enabled", true);
         
         // Log force pause state on startup if enabled
         if (isForcePaused) {
             getLogger().info("§eForce pause is ENABLED - Chunky will remain paused until disabled");
         }
+        
+        // Log memory monitoring state
+        getLogger().info("Memory monitoring: " + (memoryMonitoringEnabled ? "§aENABLED" : "§cDISABLED"));
     }
 
     private void startMemoryMonitor() {
         new BukkitRunnable() {
             @Override
             public void run() {
+                // Skip monitoring if disabled
+                if (!memoryMonitoringEnabled) {
+                    return;
+                }
+                
                 MemoryInfo memInfo = getDetailedMemoryInfo();
                 
                 // Log memory usage periodically (every 60 seconds)
@@ -774,6 +784,47 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
     
     public void resetGCCooldown() {
         lastGCTime = 0;
+    }
+    
+    public boolean isMemoryMonitoringEnabled() {
+        return memoryMonitoringEnabled;
+    }
+    
+    public void setMemoryMonitoringEnabled(boolean enabled) {
+        this.memoryMonitoringEnabled = enabled;
+        getConfig().set("memory-monitoring-enabled", enabled);
+        saveConfig();
+        
+        // If re-enabling and memory was paused, check if we should resume
+        if (enabled && isPausedByMemory) {
+            MemoryInfo memInfo = getDetailedMemoryInfo();
+            if (memInfo.usagePercent < (memoryThreshold - 0.05)) { // 5% buffer
+                isPausedByMemory = false;
+                getLogger().info("§aMemory monitoring re-enabled and memory is acceptable - resuming tasks");
+                if (!isPausedByPlayers && !isForcePaused) {
+                    Bukkit.getServer().getWorlds().forEach(world -> {
+                        try {
+                            chunky.continueTask(world.getName());
+                        } catch (Exception e) {
+                            // Ignore
+                        }
+                    });
+                }
+            }
+        }
+        
+        // If disabling and only paused by memory (not by players or force), resume
+        if (!enabled && isPausedByMemory && !isPausedByPlayers && !isForcePaused) {
+            isPausedByMemory = false;
+            getLogger().info("§eMemory monitoring disabled - resuming tasks");
+            Bukkit.getServer().getWorlds().forEach(world -> {
+                try {
+                    chunky.continueTask(world.getName());
+                } catch (Exception e) {
+                    // Ignore
+                }
+            });
+        }
     }
     
     public void checkPlayerThreshold(CommandSender sender) {

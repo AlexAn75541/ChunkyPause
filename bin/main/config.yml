@@ -86,3 +86,19 @@ clean-memory-on-join: true
 # This value is automatically updated by /chunkypause forcepause command
 # Default: false (allow automatic pause/resume based on conditions)
 force-paused: false
+
+# Enable automatic memory monitoring and cleaning
+# When enabled, the plugin will:
+# - Monitor memory usage continuously
+# - Automatically pause Chunky when memory threshold is exceeded
+# - Perform garbage collection when needed
+# - Clean memory on player join (if clean-memory-on-join is true)
+# 
+# When disabled:
+# - No automatic memory monitoring
+# - Only player count will trigger pause/resume
+# - Manual GC via /chunkypause gc still works
+# 
+# Toggle via command: /chunkypause togglememory
+# Default: true (memory monitoring enabled)
+memory-monitoring-enabled: true
