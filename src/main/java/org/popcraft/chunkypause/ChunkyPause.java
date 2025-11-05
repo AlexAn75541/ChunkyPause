@@ -522,12 +522,14 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             sender.sendMessage("§7Paused by players: §e" + isPausedByPlayers);
             sender.sendMessage("§7Force paused: §e" + isForcePaused);
             sender.sendMessage("§7Clean on join: §e" + cleanMemoryOnJoin);
+            sender.sendMessage("§7Memory monitoring: " + (memoryMonitoringEnabled ? "§aENABLED" : "§cDISABLED"));
             sender.sendMessage("§6═══════════════════════════════════");
             sender.sendMessage("§7Commands:");
             sender.sendMessage("§e  /chunkypause <number> §7- Set max players");
             sender.sendMessage("§e  /chunkypause reload §7- Reload config");
             sender.sendMessage("§e  /chunkypause gc §7- Force GC");
             sender.sendMessage("§e  /chunkypause forcepause §7- Toggle force pause");
+            sender.sendMessage("§e  /chunkypause togglememory §7- Toggle memory monitoring");
             return true;
         }
         
@@ -597,6 +599,71 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
                     }
                 }
             }
+            
+            return true;
+        }
+        
+        // Handle togglememory command
+        if (args[0].equalsIgnoreCase("togglememory")) {
+            memoryMonitoringEnabled = !memoryMonitoringEnabled;
+            
+            // Save the state to config
+            getConfig().set("memory-monitoring-enabled", memoryMonitoringEnabled);
+            saveConfig();
+            
+            if (memoryMonitoringEnabled) {
+                sender.sendMessage("§aMemory monitoring §aENABLED");
+                sender.sendMessage("§7The plugin will now:");
+                sender.sendMessage("§7  - Monitor memory usage continuously");
+                sender.sendMessage("§7  - Auto-pause Chunky when memory threshold is exceeded");
+                sender.sendMessage("§7  - Perform GC when needed");
+                sender.sendMessage("§7  - Clean memory on player join (if clean-memory-on-join is enabled)");
+                sender.sendMessage("§7  - Use adaptive strategies for your GC type (§e" + gcType + "§7)");
+                
+                if (isFixedHeapSize) {
+                    sender.sendMessage("§7  - Monitor §eUSED§7 memory only (fixed heap detected)");
+                }
+                
+                // If re-enabling and memory was paused, check if we should resume
+                if (isPausedByMemory) {
+                    MemoryInfo memInfo = getDetailedMemoryInfo();
+                    if (memInfo.usagePercent < (memoryThreshold - 0.05)) { // 5% buffer
+                        isPausedByMemory = false;
+                        sender.sendMessage("§aMemory is acceptable - resuming tasks");
+                        if (!isPausedByPlayers && !isForcePaused) {
+                            Bukkit.getServer().getWorlds().forEach(world -> {
+                                try {
+                                    chunky.continueTask(world.getName());
+                                } catch (Exception e) {
+                                    // Ignore
+                                }
+                            });
+                        }
+                    }
+                }
+            } else {
+                sender.sendMessage("§cMemory monitoring §cDISABLED");
+                sender.sendMessage("§7The plugin will now:");
+                sender.sendMessage("§7  - Only manage pause/resume based on player count");
+                sender.sendMessage("§7  - Not automatically pause for high memory");
+                sender.sendMessage("§7  - Not clean memory on player join");
+                sender.sendMessage("§7  - Manual GC via §e/chunkypause gc §7still available");
+                
+                // If disabling and only paused by memory (not by players or force), resume
+                if (isPausedByMemory && !isPausedByPlayers && !isForcePaused) {
+                    isPausedByMemory = false;
+                    sender.sendMessage("§eMemory pause cleared - resuming tasks");
+                    Bukkit.getServer().getWorlds().forEach(world -> {
+                        try {
+                            chunky.continueTask(world.getName());
+                        } catch (Exception e) {
+                            // Ignore
+                        }
+                    });
+                }
+            }
+            
+            sender.sendMessage("§7This setting has been saved to config.yml");
             
             return true;
         }
@@ -675,8 +742,8 @@ public final class ChunkyPause extends JavaPlugin implements Listener {
             });
         }
         
-        // Clean memory when player joins (if enabled)
-        if (cleanMemoryOnJoin) {
+        // Clean memory when player joins (if enabled and memory monitoring is enabled)
+        if (cleanMemoryOnJoin && memoryMonitoringEnabled) {
             getLogger().info("Player joined. Cleaning memory...");
             // Delay slightly to not block the join process
             new BukkitRunnable() {
